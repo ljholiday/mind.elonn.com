@@ -1,0 +1,109 @@
+{
+  "service": {
+    "id": "mind.elonn",
+    "name": "Mind",
+    "domain": "reasoning",
+    "purpose": "General-purpose reasoning as a Service. Given a canonical Call, Mind reasons over the material it is given and returns a canonical Dataset. Mind does not coordinate platform execution -- Conductor determines when Mind should be invoked and how its Dataset contributes to the overall result."
+  },
+  "contract": {
+    "revision": 1,
+    "published": "2026-08-23T00:00:00Z"
+  },
+  "invocation": {
+    "base_url": "https://mind.elonn.com"
+  },
+  "authentication": {
+    "required": true,
+    "scheme": "elonn-signed-request"
+  },
+  "endpoints": [
+    {
+      "id": "mind.call",
+      "method": "POST",
+      "path": "/mind/call",
+      "purpose": "Accept one authenticated canonical Call and return one canonical Service Dataset containing Mind's reasoning result.",
+      "operations": [
+        {
+          "id": "mind.reason",
+          "purpose": "Reason over the material supplied in the Call and return the reasoning result as a canonical Dataset. Mind may interpret natural language, apply logical reasoning, generate structured information, and synthesize information supplied in the Call. The implementation may use one or more reasoning models; model selection is an implementation detail not part of this Contract.",
+          "model_selectable": true,
+          "arguments": {
+            "material": {
+              "type": "string",
+              "required": true,
+              "source": "model"
+            }
+          }
+        }
+      ],
+      "request": {
+        "structure": "Call"
+      },
+      "response": {
+        "structure": "Dataset"
+      },
+      "authorization": [
+        "conductor.elonn"
+      ],
+      "side_effects": false,
+      "privacy": [
+        "Mind reasons only over the material supplied in the Call it receives. It does not retain material between Calls and does not persist reasoning results."
+      ],
+      "errors": [
+        "mind.service_auth_failed",
+        "mind.operation_required",
+        "mind.unsupported_operation",
+        "mind.material_required",
+        "mind.model_unavailable",
+        "mind.model_malformed",
+        "mind.reasoning_failed"
+      ]
+    }
+  ],
+  "structures": {
+    "canonical": [
+      "Call",
+      "Dataset"
+    ],
+    "service": [
+      "mind.reasoning object"
+    ]
+  },
+  "errors": [
+    {
+      "code": "mind.service_auth_failed",
+      "class": "auth",
+      "message": "Authenticated Conductor service request is required."
+    },
+    {
+      "code": "mind.operation_required",
+      "class": "invalid_call",
+      "message": "Mind Call content.operation is required."
+    },
+    {
+      "code": "mind.unsupported_operation",
+      "class": "invalid_call",
+      "message": "Mind operation is not supported."
+    },
+    {
+      "code": "mind.material_required",
+      "class": "invalid_call",
+      "message": "Mind reasoning requires material."
+    },
+    {
+      "code": "mind.model_unavailable",
+      "class": "dependency",
+      "message": "Mind's reasoning Model is not configured or is unreachable."
+    },
+    {
+      "code": "mind.model_malformed",
+      "class": "dependency",
+      "message": "Mind's reasoning Model returned a response that could not be used."
+    },
+    {
+      "code": "mind.reasoning_failed",
+      "class": "dependency",
+      "message": "Mind was unable to complete reasoning."
+    }
+  ]
+}

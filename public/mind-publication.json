@@ -1,0 +1,20 @@
+{
+  "service": {
+    "id": "mind.elonn",
+    "name": "Mind",
+    "domain": "reasoning",
+    "description": "General-purpose reasoning as a Service. Reasons over the material it is given and returns a canonical Dataset."
+  },
+  "capabilities": [
+    {
+      "id": "general_reasoning",
+      "description": "Reason over material supplied in a Call -- interpret natural language, synthesize information, and produce a canonical Dataset."
+    }
+  ],
+  "contract": {
+    "json": "https://mind.elonn.com/mind.json",
+    "markdown": "https://mind.elonn.com/mind.md",
+    "revision": 1
+  },
+  "published": "2026-08-23T00:00:00Z"
+}

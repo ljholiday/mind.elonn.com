@@ -1,127 +1,96 @@
 # Mind
 mind.elonn.local/README.md
-
-## Overview
+For github and other interested parties.
 
 Mind is Elonn's first-party reasoning Service.
 
-Mind provides general-purpose reasoning for the Elonn platform. It transforms canonical Calls into canonical Datasets using its configured Models and any additional Services required to satisfy the Call.
+It provides high-quality reasoning through the same Service architecture used by every other Service on the platform. Members benefit from a reasoning capability that is integrated with the rest of the Elonn ecosystem while remaining independent of any particular model provider.
 
-Mind is a Service. It participates in the platform alongside Maps, Messages, Calendar, Paint, Time, and every other domain capability.
+Mind does not orchestrate requests. It performs reasoning in response to Calls received through its published Service contract and returns the results as a canonical Dataset.
 
 ## Responsibilities
 
-Mind is responsible for:
+Mind:
 
-* Receiving canonical Calls.
-* Understanding the member's request.
-* Reasoning over the information available in the Call.
-* Determining when additional capabilities are required.
-* Selecting and invoking Services as needed.
-* Continuing reasoning as new information becomes available.
-* Assembling a canonical Dataset.
-* Returning the Dataset.
+* Accepts canonical Calls.
+* Performs reasoning using one or more underlying models.
+* Produces canonical Datasets.
+* May use external model providers or locally hosted models.
+* Presents a stable Service contract regardless of implementation.
+
+Mind does not:
+
+* Coordinate other Services.
+* Select which Services should participate in a request.
+* Manage sessions.
+* Present user interfaces.
+* Maintain Runtime state.
 
 ## Architecture
 
+Mind participates in the platform exactly like every other Service.
+
 ```text
-Conductor
+Runtime
     │
-Canonical Call
     ▼
-Mind
+World
     │
-Canonical Service Calls
-    ▼
-Services
-    │
-Canonical Service Datasets
-    ▼
-Mind
-    │
-Canonical Dataset
     ▼
 Conductor
+    │
+    ├──► Mind
+    ├──► Maps
+    ├──► Time
+    ├──► Social
+    └──► Third-party Services
+             │
+             ▼
+         Dataset
+             │
+             ▼
+        Conductor
+             │
+             ▼
+           World
+             │
+             ▼
+          Runtime
 ```
 
-Mind owns reasoning.
-
-Services own domain capabilities.
-
-Providers implement external integrations for individual Services.
+Conductor determines when Mind should participate in satisfying a Call.
 
 ## Models
 
-Mind performs reasoning using one or more configured Models.
+Mind is model-independent.
 
-Models are internal components of Mind. They analyze Calls, evaluate available information, determine when additional capabilities are required, and guide the reasoning process.
+The implementation may use local models, hosted models, commercial APIs, or future reasoning providers without changing the published Service contract.
 
-## Services
-
-Mind uses Services when reasoning requires capabilities beyond those provided by its Models.
-
-Examples include:
-
-* Maps
-* Messages
-* Calendar
-* Time
-* Search
-* Storage
-
-Mind communicates with every Service through canonical Service Calls and receives canonical Service Datasets in return.
-
-## Calls
-
-Mind receives canonical Calls.
-
-Calls are immutable throughout the reasoning session.
-
-## Dataset
-
-Every reasoning session produces one canonical Dataset.
-
-The Dataset represents the complete result of the reasoning process.
-
-Before returning a Dataset, Mind validates it against the canonical Dataset specification.
-
-## Authentication
-
-Call authentication is performed before reasoning begins.
-
-Mind authenticates when communicating with other Services.
-
-Member identity is preserved throughout the reasoning session.
-
-## Validation
-
-Mind validates:
-
-* incoming Calls
-* outgoing Service Calls
-* returned Service Datasets
-* the final Dataset
-
-Validation failures become canonical errors.
-
-## Metrics
-
-Mind records operational metrics including Model usage, reasoning duration, Service usage, latency, failures, and contract violations.
-
-## Tracing
-
-Every reasoning session is traceable.
-
-Tracing records reasoning activity, Model interactions, Service Calls, returned Datasets, timing information, and errors.
+Replacing or adding models does not affect consumers of the Mind Service.
 
 ## Contracts
 
-Mind communicates exclusively through canonical contracts.
+Mind publishes one Service contract.
 
-* Canonical Calls
-* Canonical Service Calls
-* Canonical Service Datasets
-* Canonical Datasets
+Request:
 
-Canonical data structures and contracts are maintained in the shared Elonn canonical and contract specifications.
+* Call
+
+Response:
+
+* Dataset
+
+Consumers interact with Mind exclusively through this contract.
+
+## Canonical Data
+
+Mind consumes and produces only canonical Elonn data structures.
+
+Implementation-specific formats are internal implementation details.
+
+## Related Documentation
+
+* `MIND.md`
+* Service Contract Authoring Guide
+* `ELONN.md`
 

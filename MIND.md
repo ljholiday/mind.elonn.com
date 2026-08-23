@@ -1,180 +1,117 @@
 # MIND
 mind.elonn.local/MIND.md
+For agents and developers.
 
-## Overview
+This document defines the normative behavior of the Mind Service.
 
-Mind is Elonn's reasoning component.
+## Purpose
 
-World sends Mind a canonical Call. Mind reasons over that Call, invokes Services when additional capabilities are required, and returns a canonical Dataset to World.
+Mind provides reasoning as a Service.
 
-Mind owns reasoning.
+Given a canonical Call, Mind performs reasoning and returns a canonical Dataset. Mind may use one or more reasoning models to produce its response, but its external behavior is defined entirely by its published Service contract.
 
-World owns member and world context.
+## Position Within the Platform
 
-Services own domain capabilities.
+Mind is one Service among many.
 
-Providers implement external integrations for individual Services.
+Mind does not coordinate platform execution. Requests are orchestrated by Conductor, which determines when Mind should be invoked and how Mind's Dataset contributes to the overall result.
 
----
+Mind has no special communication privileges beyond those defined by its published Service contract.
 
-## Responsibilities
+## Contract
 
-Mind is responsible for:
+Mind publishes a single Service contract.
 
-- Receiving canonical Calls from World.
-- Validating incoming Calls.
-- Understanding the member's request.
-- Determining what information and capabilities are required.
-- Discovering available Services and their capabilities.
-- Selecting Models for each stage of reasoning.
-- Constructing canonical Service Calls.
-- Invoking Services.
-- Validating returned Service Datasets.
-- Continuing reasoning using newly acquired information.
-- Determining when reasoning is complete.
-- Assembling the final canonical Dataset.
-- Returning the Dataset to World.
+Request:
 
----
+* Call
 
-## Architecture
+Response:
 
-```
-Runtime
-    │
-    ▼
-World
-    │
-Canonical Call
-    ▼
-Mind
-    │
-Canonical Service Calls
-    ▼
-Services
-    │
-Canonical Service Datasets
-    ▼
-Mind
-    │
-Canonical Dataset
-    ▼
-World
-```
+* Dataset
 
-Mind is the only component that performs reasoning.
+Every consumer, including Conductor, interacts with Mind through this contract.
 
----
+## Inputs
 
-## Calls
+Mind accepts a canonical Call.
 
-Mind receives canonical Calls from World.
+The Call contains the member's request together with any canonical context supplied by the caller.
 
-A Call contains the member's request together with the context World has chosen to provide.
+## Outputs
 
-Mind treats the Call as immutable.
+Mind returns a canonical Dataset.
 
----
+The Dataset may contain canonical:
+
+* Objects
+* Collections
+* Relationships
+* Resources
+* Actions
+* Placements
+* Context
+
+Errors are represented using canonical error Context entries.
 
 ## Reasoning
 
-Reasoning is the process of transforming a Call into a Dataset.
+Mind determines how to satisfy the received Call through reasoning.
 
-Mind reasons over:
+The implementation may:
 
-- the incoming Call
-- the context supplied by World
-- the capabilities published by available Services
-- information returned by Services
+* Interpret natural language.
+* Apply logical reasoning.
+* Generate structured information.
+* Synthesize information supplied in the Call.
+* Use one or more reasoning models.
 
-As reasoning progresses, Mind determines what additional capabilities are required and invokes the appropriate Services.
-
-Reasoning concludes when Mind determines that no additional Service operations are required to continue processing the Call.
-
----
+The implementation details of the reasoning process are not part of the Service contract.
 
 ## Models
 
-Models perform reasoning on behalf of Mind.
+Mind is independent of any specific model.
 
-Mind is configured with one or more available Models.
+Implementations may select, combine, replace, or upgrade reasoning models without changing the published Service contract.
 
-During a reasoning session, Mind selects the appropriate Model or Models for each reasoning task.
+Model selection is an implementation detail.
 
-The process used to select Models is internal to Mind and may evolve without affecting World or Services.
+## Canonical Structures
 
----
+Mind accepts only canonical Calls.
 
-## Services
+Mind returns only canonical Datasets.
 
-Services publish the capabilities they provide.
+Canonical structures are defined by the Canonical Data Model.
 
-Mind discovers those capabilities and uses them during reasoning.
+## Security
 
-Mind communicates with Services exclusively through canonical Service Calls.
+Mind authenticates and authorizes incoming requests according to platform policy.
 
-Services communicate with Mind exclusively through canonical Service Datasets.
+Mind does not define authentication mechanisms. Those mechanisms are established by the platform and the published Service contract.
 
-Mind never communicates directly with external Providers.
+## Observability
 
----
+Mind should emit sufficient telemetry to support diagnostics, performance monitoring, and distributed tracing.
 
-## Dataset
+Telemetry is an implementation concern and is not part of the published Service contract.
 
-Every Call produces one canonical Dataset.
+## Non-Goals
 
-Mind assembles the Dataset from the complete reasoning session.
+Mind is not responsible for:
 
-Before returning the Dataset to World, Mind validates it against the canonical Dataset specification.
+* Service orchestration.
+* Service discovery.
+* Session management.
+* Runtime presentation.
+* User interface rendering.
+* Authentication user experience.
+* World implementation.
+* Conductor implementation.
 
----
+## Compatibility
 
-## Authentication
+The Mind Service contract is stable across implementation changes.
 
-World authenticates to Mind.
+Replacing models, changing providers, or improving reasoning behavior must not require consumers to change their integration with Mind.
 
-Mind authenticates to Services.
-
-Member identity supplied by World is preserved throughout the reasoning session.
-
----
-
-## Validation
-
-Mind validates:
-
-- incoming Calls
-- outgoing Service Calls
-- returned Service Datasets
-- the final Dataset
-
-Validation failures become canonical errors.
-
----
-
-## Metrics
-
-Mind records operational metrics for every reasoning session, including reasoning duration, Model usage, Service usage, latency, failures, and contract violations.
-
----
-
-## Tracing
-
-Every reasoning session is traceable.
-
-Tracing records reasoning decisions, Model interactions, Service Calls, returned Datasets, timing, and errors.
-
----
-
-## Invariants
-
-The following statements are always true.
-
-- World communicates with Mind using canonical Calls.
-- Mind communicates with Services using canonical Service Calls.
-- Services communicate with Mind using canonical Service Datasets.
-- Mind communicates with World using canonical Datasets.
-- Mind owns reasoning.
-- World owns context.
-- Services own capabilities.
-- Providers are accessed only through Services.
