@@ -7,6 +7,7 @@ namespace App;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\Router;
+use App\Reasoning\AiUsageRecorder;
 use App\Reasoning\OpenAiReasoningClient;
 use App\Reasoning\ReasoningException;
 use App\Reasoning\ReasoningModelClient;
@@ -25,10 +26,17 @@ use Throwable;
 final class Application
 {
     private Router $router;
+    private readonly AiUsageRecorder $aiUsageRecorder;
 
     /** @param array<string, mixed> $config */
     public function __construct(private readonly array $config)
     {
+        $aiUsage = (array) ($config['ai_usage'] ?? []);
+        $this->aiUsageRecorder = new AiUsageRecorder(
+            (string) ($aiUsage['path'] ?? ''),
+            (array) ($config['model']['pricing'] ?? []),
+            (int) ($aiUsage['max_records'] ?? 5000)
+        );
         $this->router = new Router();
         $this->routes();
     }
@@ -95,7 +103,29 @@ final class Application
                 'response_time_ms' => round((microtime(true) - $startedAt) * 1000, 2),
                 'custom_metrics' => [
                     'model_provider' => (string) ($model['provider'] ?? ''),
+                    'ai_usage_event_count' => $this->aiUsageRecorder->nextSinceId(),
                 ],
+            ]);
+        });
+
+        $this->router->get('/metrics/ai-usage', function (Request $request): Response {
+            $caller = $this->authenticatedService($request);
+            if ($caller === null || $caller->name !== 'admin.elonn') {
+                return Response::json([
+                    'errors' => [[
+                        'code' => 'mind.service_auth_failed',
+                        'class' => 'auth',
+                        'message' => 'Authenticated admin service request is required.',
+                    ]],
+                ], 401);
+            }
+
+            $sinceId = max(0, (int) ($_GET['since_id'] ?? 0));
+            $limit = max(1, min(500, (int) ($_GET['limit'] ?? 100)));
+
+            return Response::json([
+                'events' => $this->aiUsageRecorder->summaries($sinceId, $limit),
+                'next_since_id' => $this->aiUsageRecorder->nextSinceId(),
             ]);
         });
 
@@ -140,7 +170,7 @@ final class Application
             }
 
             try {
-                $result = $this->reasoningClient()->reason($material);
+                $result = $this->reasoningClient($caller->name)->reason($material);
             } catch (ReasoningException $exception) {
                 return $this->datasetError($exception->errorCode, $exception->errorClass, $exception->getMessage(), $exception->httpStatus, $caller);
             } catch (Throwable $throwable) {
@@ -161,7 +191,7 @@ final class Application
         return (new ServiceAuthenticator($tokens, $verifier))->authenticate($request);
     }
 
-    private function reasoningClient(): ReasoningModelClient
+    private function reasoningClient(string $requesterService): ReasoningModelClient
     {
         $model = (array) ($this->config['model'] ?? []);
         if ((string) ($model['provider'] ?? '') !== 'openai') {
@@ -175,7 +205,9 @@ final class Application
             (string) ($openai['api_key'] ?? ''),
             (string) ($model['name'] ?? 'gpt-5.6'),
             (int) ($model['timeout_seconds'] ?? 20),
-            (int) ($model['output_tokens'] ?? 600)
+            (int) ($model['output_tokens'] ?? 600),
+            $this->aiUsageRecorder,
+            $requesterService
         );
     }
 

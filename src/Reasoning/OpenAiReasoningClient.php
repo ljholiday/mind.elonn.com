@@ -17,7 +17,9 @@ final class OpenAiReasoningClient implements ReasoningModelClient
         private string $apiKey,
         private string $model,
         private int $timeoutSeconds,
-        private int $outputTokens
+        private int $outputTokens,
+        private ?AiUsageRecorder $usageRecorder = null,
+        private string $requesterService = 'conductor.elonn'
     ) {
     }
 
@@ -30,24 +32,53 @@ final class OpenAiReasoningClient implements ReasoningModelClient
             throw new ReasoningException('mind.model_unavailable', 'dependency', 'OpenAI Responses endpoint is not configured.', 503);
         }
 
-        $response = $this->post([
-            'model' => $this->model,
-            'input' => [
-                [
-                    'role' => 'system',
-                    'content' => 'You are Mind, the Elonn platform\'s reasoning Service. Reason over the material '
-                        . 'you are given and respond with your reasoning result as plain text. Be direct and useful; '
-                        . 'do not describe your own process.',
+        $startedAt = microtime(true);
+        try {
+            $response = $this->post([
+                'model' => $this->model,
+                'input' => [
+                    [
+                        'role' => 'system',
+                        'content' => 'You are Mind, the Elonn platform\'s reasoning Service. Reason over the material '
+                            . 'you are given and respond with your reasoning result as plain text. Be direct and useful; '
+                            . 'do not describe your own process.',
+                    ],
+                    [
+                        'role' => 'user',
+                        'content' => $material,
+                    ],
                 ],
-                [
-                    'role' => 'user',
-                    'content' => $material,
-                ],
-            ],
-            'max_output_tokens' => $this->outputTokens,
-        ]);
+                'max_output_tokens' => $this->outputTokens,
+            ]);
+        } catch (ReasoningException $exception) {
+            $this->recordUsage([], $startedAt, 'error', $exception->getMessage());
+            throw $exception;
+        }
+
+        $this->recordUsage(
+            is_array($response['usage'] ?? null) ? $response['usage'] : [],
+            $startedAt,
+            'ok',
+            null
+        );
 
         return new ReasoningResult($this->outputText($response), $this->model);
+    }
+
+    /**
+     * @param array<string, mixed> $usage
+     */
+    private function recordUsage(array $usage, float $startedAt, string $status, ?string $errorMessage): void
+    {
+        $this->usageRecorder?->record(
+            'openai',
+            $this->model,
+            $this->requesterService,
+            $usage,
+            (int) round((microtime(true) - $startedAt) * 1000),
+            $status,
+            $errorMessage
+        );
     }
 
     /**
