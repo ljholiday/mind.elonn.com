@@ -13,12 +13,17 @@ function mind_test_config(): array
     return [
         'app' => ['environment' => 'testing', 'debug' => false, 'url' => 'https://mind.elonn.local'],
         'model' => [
-            'provider' => '',
-            'name' => 'gpt-5.6',
             'timeout_seconds' => 20,
             'output_tokens' => 600,
             'openai' => ['responses_url' => '', 'api_key' => ''],
+            'ollama' => ['url' => 'http://127.0.0.1:11434'],
+            'tiers' => [
+                'frontier' => ['enabled' => true, 'provider' => 'openai', 'name' => 'gpt-5.6-sol', 'input_price_per_million' => null, 'cached_input_price_per_million' => null, 'output_price_per_million' => null],
+                'cheap' => ['enabled' => false, 'provider' => 'openai', 'name' => 'gpt-5.6-luna', 'input_price_per_million' => null, 'cached_input_price_per_million' => null, 'output_price_per_million' => null],
+                'in_house' => ['enabled' => false, 'provider' => 'ollama', 'name' => '', 'input_price_per_million' => null, 'cached_input_price_per_million' => null, 'output_price_per_million' => null],
+            ],
         ],
+        'ai_usage' => ['path' => '', 'max_records' => 5000],
         'service_auth' => [
             'admin.elonn' => 'admin-token',
             'conductor_keys_url' => '',
@@ -50,6 +55,11 @@ $missingMaterial = mind_call($app, mind_test_headers(), ['content' => ['operatio
 $modelUnavailable = mind_call($app, mind_test_headers(), ['content' => ['operation' => 'mind.reason', 'material' => 'What is the capital of France?']]);
 $modelUnavailableBody = json_decode($modelUnavailable->body(), true);
 
+// A caller-supplied tier -- known-but-disabled, or unrecognized -- must not change the
+// outcome here: it falls back to frontier, which is itself unconfigured in this test.
+$disabledTier = mind_call($app, mind_test_headers(), ['content' => ['operation' => 'mind.reason', 'material' => 'hi', 'tier' => 'cheap']]);
+$bogusTier = mind_call($app, mind_test_headers(), ['content' => ['operation' => 'mind.reason', 'material' => 'hi', 'tier' => 'nonsense']]);
+
 $checks = [
     'Unauthenticated caller is rejected' => $unauthenticated->status() === 401
         && (json_decode($unauthenticated->body(), true)['errors'][0]['code'] ?? '') === 'mind.service_auth_failed',
@@ -63,6 +73,12 @@ $checks = [
         $modelUnavailable->status() === 503
         && ($modelUnavailableBody['errors'][0]['code'] ?? '') === 'mind.model_unavailable'
         && ($modelUnavailableBody['objects'] ?? []) === [],
+    'A disabled content.tier falls back to frontier (same fail-closed outcome here)' =>
+        $disabledTier->status() === 503
+        && (json_decode($disabledTier->body(), true)['errors'][0]['code'] ?? '') === 'mind.model_unavailable',
+    'An unrecognized content.tier is treated as frontier, never an error' =>
+        $bogusTier->status() === 503
+        && (json_decode($bogusTier->body(), true)['errors'][0]['code'] ?? '') === 'mind.model_unavailable',
 ];
 
 $failed = 0;

@@ -6,20 +6,18 @@ namespace App\Reasoning;
 
 /**
  * Persists one append-only JSON line per Model provider call so admin.elonn's
- * Operations Center can mirror it through GET /metrics/ai-usage. Token counts
- * are captured from the provider response; cost_usd is derived from a
- * per-(provider, model) price table, or left null when no rate is configured.
+ * Operations Center can mirror it through GET /metrics/ai-usage. Token counts are
+ * captured from the provider response; cost_usd is computed from the per-tier
+ * rates the caller passes in (USD per 1,000,000 tokens), cached input priced
+ * separately, and left null when no rate is supplied.
  */
 final class AiUsageRecorder
 {
     /**
-     * @param array<string, array<string, array{input_per_million: float, output_per_million: float}>> $pricing
-     *        USD per 1,000,000 tokens, keyed provider -> model.
      * @param int $maxRecords Newest N events kept on disk; 0 disables pruning.
      */
     public function __construct(
         private string $path,
-        private array $pricing = [],
         private int $maxRecords = 5000
     ) {
     }
@@ -34,11 +32,20 @@ final class AiUsageRecorder
         array $usage,
         int $latencyMs,
         string $status,
-        ?string $errorMessage
+        ?string $errorMessage,
+        ?float $inputPricePerMillion = null,
+        ?float $cachedInputPricePerMillion = null,
+        ?float $outputPricePerMillion = null
     ): void {
         $inputTokens = (int) ($usage['input_tokens'] ?? $usage['prompt_tokens'] ?? 0);
         $outputTokens = (int) ($usage['output_tokens'] ?? $usage['completion_tokens'] ?? 0);
         $totalTokens = (int) ($usage['total_tokens'] ?? ($inputTokens + $outputTokens));
+        $cachedInputTokens = (int) (
+            $usage['input_tokens_details']['cached_tokens']
+            ?? $usage['prompt_tokens_details']['cached_tokens']
+            ?? $usage['cached_input_tokens']
+            ?? 0
+        );
 
         $this->append([
             'id' => $this->nextId(),
@@ -46,9 +53,17 @@ final class AiUsageRecorder
             'model' => $model,
             'requester_service' => $requesterService,
             'input_tokens' => $inputTokens,
+            'cached_input_tokens' => $cachedInputTokens,
             'output_tokens' => $outputTokens,
             'total_tokens' => $totalTokens,
-            'cost_usd' => $this->cost($provider, $model, $inputTokens, $outputTokens),
+            'cost_usd' => $this->cost(
+                $inputTokens,
+                $cachedInputTokens,
+                $outputTokens,
+                $inputPricePerMillion,
+                $cachedInputPricePerMillion,
+                $outputPricePerMillion
+            ),
             'latency_ms' => $latencyMs,
             'status' => $status,
             'error_message' => $errorMessage,
@@ -76,18 +91,33 @@ final class AiUsageRecorder
         return $max;
     }
 
-    private function cost(string $provider, string $model, int $inputTokens, int $outputTokens): ?float
-    {
-        $rates = $this->pricing[$provider][$model] ?? null;
-        if (!is_array($rates)) {
+    /**
+     * cost_usd from the tier's rates. Null only when no rate at all was supplied
+     * (token counts still recorded). Cached input is billed at its own rate,
+     * falling back to the uncached input rate when only that is set.
+     */
+    private function cost(
+        int $inputTokens,
+        int $cachedInputTokens,
+        int $outputTokens,
+        ?float $inputPricePerMillion,
+        ?float $cachedInputPricePerMillion,
+        ?float $outputPricePerMillion
+    ): ?float {
+        if ($inputPricePerMillion === null && $cachedInputPricePerMillion === null && $outputPricePerMillion === null) {
             return null;
         }
 
-        $inputPerMillion = (float) ($rates['input_per_million'] ?? 0);
-        $outputPerMillion = (float) ($rates['output_per_million'] ?? 0);
+        $cachedInputTokens = max(0, min($cachedInputTokens, $inputTokens));
+        $uncachedInputTokens = $inputTokens - $cachedInputTokens;
+        $inputRate = $inputPricePerMillion ?? 0.0;
+        $cachedRate = $cachedInputPricePerMillion ?? $inputRate;
+        $outputRate = $outputPricePerMillion ?? 0.0;
 
         return round(
-            $inputTokens / 1_000_000 * $inputPerMillion + $outputTokens / 1_000_000 * $outputPerMillion,
+            $uncachedInputTokens / 1_000_000 * $inputRate
+            + $cachedInputTokens / 1_000_000 * $cachedRate
+            + $outputTokens / 1_000_000 * $outputRate,
             6
         );
     }
@@ -129,7 +159,13 @@ final class AiUsageRecorder
             mkdir($directory, 0775, true);
         }
 
-        file_put_contents($this->path, json_encode($record, JSON_UNESCAPED_SLASHES) . PHP_EOL, FILE_APPEND | LOCK_EX);
+        // JSON_PRESERVE_ZERO_FRACTION keeps a whole-dollar cost_usd (e.g. 14.0) a float on read-back
+        // rather than decoding as an int.
+        file_put_contents(
+            $this->path,
+            json_encode($record, JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION) . PHP_EOL,
+            FILE_APPEND | LOCK_EX
+        );
         $this->prune();
     }
 

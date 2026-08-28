@@ -8,10 +8,9 @@ use App\Http\Request;
 use App\Http\Response;
 use App\Http\Router;
 use App\Reasoning\AiUsageRecorder;
-use App\Reasoning\OpenAiReasoningClient;
+use App\Reasoning\ModelRouter;
+use App\Reasoning\ModelTier;
 use App\Reasoning\ReasoningException;
-use App\Reasoning\ReasoningModelClient;
-use App\Reasoning\UnavailableReasoningClient;
 use App\Security\AuthenticatedService;
 use App\Security\ServiceAuthenticator;
 use App\Security\SignedRequestVerifier;
@@ -27,6 +26,7 @@ final class Application
 {
     private Router $router;
     private readonly AiUsageRecorder $aiUsageRecorder;
+    private readonly ModelRouter $modelRouter;
 
     /** @param array<string, mixed> $config */
     public function __construct(private readonly array $config)
@@ -34,9 +34,9 @@ final class Application
         $aiUsage = (array) ($config['ai_usage'] ?? []);
         $this->aiUsageRecorder = new AiUsageRecorder(
             (string) ($aiUsage['path'] ?? ''),
-            (array) ($config['model']['pricing'] ?? []),
             (int) ($aiUsage['max_records'] ?? 5000)
         );
+        $this->modelRouter = new ModelRouter((array) ($config['model'] ?? []), $this->aiUsageRecorder);
         $this->router = new Router();
         $this->routes();
     }
@@ -60,21 +60,16 @@ final class Application
         $this->router->get('/descriptor', fn (): Response => Response::json(ServiceDescriptor::payload()));
 
         $this->router->get('/ready', function (): Response {
-            $model = (array) ($this->config['model'] ?? []);
-            $provider = (string) ($model['provider'] ?? '');
-            $configured = $provider === 'openai'
-                && (string) ($model['openai']['api_key'] ?? '') !== ''
-                && (string) ($model['openai']['responses_url'] ?? '') !== '';
-
-            $dependencies = [
-                'model_provider' => $provider !== '' ? $provider : 'unconfigured',
-                'model' => $configured ? 'configured' : 'not_configured',
-            ];
+            $tiers = $this->modelRouter->status();
+            $configured = ($tiers['frontier'] ?? '') === 'active';
 
             return Response::json([
                 'status' => $configured ? 'ready' : 'not_ready',
                 'service' => 'elonn_mind',
-                'dependencies' => $dependencies,
+                'dependencies' => [
+                    'model' => $configured ? 'configured' : 'not_configured',
+                    'model_tiers' => $tiers,
+                ],
             ], $configured ? 200 : 500);
         });
 
@@ -91,9 +86,8 @@ final class Application
                 ], 401);
             }
 
-            $model = (array) ($this->config['model'] ?? []);
-            $configured = (string) ($model['provider'] ?? '') === 'openai'
-                && (string) ($model['openai']['api_key'] ?? '') !== '';
+            $tiers = $this->modelRouter->status();
+            $configured = ($tiers['frontier'] ?? '') === 'active';
 
             return Response::json([
                 'contract_version' => '1.0',
@@ -102,7 +96,7 @@ final class Application
                 'timestamp' => gmdate('Y-m-d\TH:i:s\Z'),
                 'response_time_ms' => round((microtime(true) - $startedAt) * 1000, 2),
                 'custom_metrics' => [
-                    'model_provider' => (string) ($model['provider'] ?? ''),
+                    'model_tiers' => $tiers,
                     'ai_usage_event_count' => $this->aiUsageRecorder->nextSinceId(),
                 ],
             ]);
@@ -169,8 +163,10 @@ final class Application
                 return $this->datasetError('mind.material_required', 'invalid_call', 'Mind reasoning requires material.', 422, $caller);
             }
 
+            $tier = ModelTier::fromRequest($content['tier'] ?? null);
+
             try {
-                $result = $this->reasoningClient($caller->name)->reason($material);
+                $result = $this->modelRouter->clientFor($tier, $caller->name)->reason($material);
             } catch (ReasoningException $exception) {
                 return $this->datasetError($exception->errorCode, $exception->errorClass, $exception->getMessage(), $exception->httpStatus, $caller);
             } catch (Throwable $throwable) {
@@ -189,26 +185,6 @@ final class Application
         $verifier = new SignedRequestVerifier((string) ($tokens['conductor_keys_url'] ?? ''));
 
         return (new ServiceAuthenticator($tokens, $verifier))->authenticate($request);
-    }
-
-    private function reasoningClient(string $requesterService): ReasoningModelClient
-    {
-        $model = (array) ($this->config['model'] ?? []);
-        if ((string) ($model['provider'] ?? '') !== 'openai') {
-            return new UnavailableReasoningClient();
-        }
-
-        $openai = (array) ($model['openai'] ?? []);
-
-        return new OpenAiReasoningClient(
-            (string) ($openai['responses_url'] ?? ''),
-            (string) ($openai['api_key'] ?? ''),
-            (string) ($model['name'] ?? 'gpt-5.6'),
-            (int) ($model['timeout_seconds'] ?? 20),
-            (int) ($model['output_tokens'] ?? 600),
-            $this->aiUsageRecorder,
-            $requesterService
-        );
     }
 
     /** @return array<string, mixed> */

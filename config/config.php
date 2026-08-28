@@ -11,14 +11,21 @@ return [
         'url' => mind_service_url('APP_URL', $environment, 'https://mind.elonn.local', 'https://mind.elonn.com'),
     ],
     'model' => [
-        'provider' => strtolower(mind_string_config('MODEL_PROVIDER')),
-        'name' => mind_string_config('MODEL_NAME', 'gpt-5.6'),
         'timeout_seconds' => mind_int_config('MODEL_TIMEOUT_SECONDS', 20),
         'output_tokens' => mind_int_config('MODEL_OUTPUT_TOKENS', 600),
-        'pricing' => mind_pricing_config(),
         'openai' => [
             'responses_url' => mind_string_config('OPENAI_RESPONSES_URL'),
             'api_key' => mind_string_config('OPENAI_API_KEY'),
+        ],
+        'ollama' => [
+            'url' => rtrim(mind_string_config('OLLAMA_URL', 'http://127.0.0.1:11434'), '/'),
+        ],
+        // Three model tiers. Only frontier is enabled by default; cheap / in_house
+        // are opt-in for mundane reasoning. A Call may request a tier via content.tier.
+        'tiers' => [
+            'frontier' => mind_model_tier_config('FRONTIER', true),
+            'cheap' => mind_model_tier_config('CHEAP', false),
+            'in_house' => mind_model_tier_config('IN_HOUSE', false),
         ],
     ],
     'ai_usage' => [
@@ -54,39 +61,39 @@ function mind_path_config(string $key, string $default): string
 }
 
 /**
- * Per-(provider, model) Model prices in USD per 1,000,000 tokens, used to turn the
- * token counts captured on each reasoning provider call into a cost_usd figure on
- * the AI usage event stream. Rates are deployment-specific operational data, so
- * nothing is committed: without MODEL_PRICING_JSON, events still record token
- * counts and cost_usd is null. One JSON object (provider -> model ->
- * {input_per_million, output_per_million}) so a dotted model id never becomes an env key.
+ * One model tier's configuration. The frontier tier falls back to the legacy
+ * MODEL_PROVIDER / MODEL_NAME keys so an existing deployment's .env keeps working
+ * unchanged (frontier = whatever single model it configured before).
  *
- * @return array<string, array<string, array{input_per_million: float, output_per_million: float}>>
+ * @return array{enabled:bool, provider:string, name:string, input_price_per_million:?float,
+ *     cached_input_price_per_million:?float, output_price_per_million:?float}
  */
-function mind_pricing_config(): array
+function mind_model_tier_config(string $tier, bool $enabledDefault): array
 {
-    $decoded = json_decode(mind_string_config('MODEL_PRICING_JSON', ''), true);
-    if (!is_array($decoded)) {
-        return [];
-    }
+    $prefix = 'MODEL_' . $tier . '_';
+    $providerFallback = $tier === 'FRONTIER' ? strtolower(mind_string_config('MODEL_PROVIDER')) : '';
+    $nameFallback = $tier === 'FRONTIER' ? mind_string_config('MODEL_NAME', 'gpt-5.6') : '';
 
-    $pricing = [];
-    foreach ($decoded as $provider => $models) {
-        if (!is_array($models)) {
-            continue;
-        }
-        foreach ($models as $model => $rates) {
-            if (!is_array($rates)) {
-                continue;
-            }
-            $pricing[(string) $provider][(string) $model] = [
-                'input_per_million' => (float) ($rates['input_per_million'] ?? 0),
-                'output_per_million' => (float) ($rates['output_per_million'] ?? 0),
-            ];
-        }
-    }
+    return [
+        'enabled' => mind_bool_config($prefix . 'ENABLED', $enabledDefault),
+        'provider' => strtolower(mind_string_config($prefix . 'PROVIDER', $providerFallback)),
+        'name' => mind_string_config($prefix . 'NAME', $nameFallback),
+        'input_price_per_million' => mind_price_config($prefix . 'INPUT_PRICE_PER_MILLION'),
+        'cached_input_price_per_million' => mind_price_config($prefix . 'CACHED_INPUT_PRICE_PER_MILLION'),
+        'output_price_per_million' => mind_price_config($prefix . 'OUTPUT_PRICE_PER_MILLION'),
+    ];
+}
 
-    return $pricing;
+/**
+ * A single model price in USD per 1,000,000 tokens. Deployment-specific, so nothing
+ * is committed: an unset or non-numeric value is null, and usage events then record
+ * token counts with cost_usd left null.
+ */
+function mind_price_config(string $key): ?float
+{
+    $value = mind_string_config($key);
+
+    return is_numeric($value) ? (float) $value : null;
 }
 
 function mind_int_config(string $key, int $default): int

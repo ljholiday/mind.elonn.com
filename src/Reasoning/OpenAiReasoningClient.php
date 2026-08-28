@@ -19,7 +19,10 @@ final class OpenAiReasoningClient implements ReasoningModelClient
         private int $timeoutSeconds,
         private int $outputTokens,
         private ?AiUsageRecorder $usageRecorder = null,
-        private string $requesterService = 'conductor.elonn'
+        private string $requesterService = 'conductor.elonn',
+        private ?float $inputPricePerMillion = null,
+        private ?float $cachedInputPricePerMillion = null,
+        private ?float $outputPricePerMillion = null
     ) {
     }
 
@@ -77,7 +80,10 @@ final class OpenAiReasoningClient implements ReasoningModelClient
             $usage,
             (int) round((microtime(true) - $startedAt) * 1000),
             $status,
-            $errorMessage
+            $errorMessage,
+            $this->inputPricePerMillion,
+            $this->cachedInputPricePerMillion,
+            $this->outputPricePerMillion
         );
     }
 
