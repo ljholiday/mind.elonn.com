@@ -11,13 +11,24 @@ result.
 
 - Service id: `mind.elonn`
 - Domain: `reasoning`
-- Revision: `1`
-- Published: `2026-08-23T00:00:00Z`
+- Revision: `2`
+- Published: `2026-08-27T00:00:00Z`
 - Canonical JSON: `https://mind.elonn.com/mind.json`
 - Service Publication: `https://mind.elonn.com/mind-publication.json`
 
 The canonical JSON contract is authoritative. This Markdown document describes the same Service contract
 for human readers.
+
+## Labels
+
+The contract carries a top-level `labels` pairs table — the display copy a generic consumer
+(the runtime form renderer, the reasoning Model, a Service Dashboard) shows for each argument.
+Argument schemas reference it by `label_ref`; a platform orchestrator resolves the refs to text
+before presenting a schema.
+
+| Ref | Text |
+| --- | --- |
+| `field.reasoning_material` | What to reason about |
 
 ## Authentication
 

@@ -6,8 +6,11 @@
     "purpose": "General-purpose reasoning as a Service. Given a canonical Call, Mind reasons over the material it is given and returns a canonical Dataset. Mind does not coordinate platform execution -- Conductor determines when Mind should be invoked and how its Dataset contributes to the overall result."
   },
   "contract": {
-    "revision": 1,
+    "revision": 2,
     "published": "2026-08-23T00:00:00Z"
+  },
+  "labels": {
+    "field.reasoning_material": "What to reason about"
   },
   "invocation": {
     "base_url": "https://mind.elonn.com"
@@ -31,8 +34,7 @@
             "material": {
               "type": "string",
               "required": true,
-              "source": "model"
-            }
+              "source": "model", "label_ref": "field.reasoning_material"}
           }
         }
       ],
