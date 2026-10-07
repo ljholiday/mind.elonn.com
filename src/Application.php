@@ -123,6 +123,75 @@ final class Application
             ]);
         });
 
+        $this->router->get('/administrative-interface', function (Request $request): Response {
+            $caller = $this->authenticatedService($request);
+            if ($caller === null || $caller->name !== 'admin.elonn') {
+                return Response::json([
+                    'errors' => [[
+                        'code' => 'mind.service_auth_failed',
+                        'class' => 'auth',
+                        'message' => 'Authenticated admin service request is required.',
+                    ]],
+                ], 401);
+            }
+
+            $checks = [];
+            $healthy = true;
+
+            $aiUsagePath = (string) ($this->config['ai_usage']['path'] ?? '');
+            if ($aiUsagePath === '' || (!is_file($aiUsagePath) && !is_dir(dirname($aiUsagePath)))) {
+                $healthy = false;
+                $checks[] = ['name' => 'ai_usage_log', 'state' => 'fail', 'detail' => 'Not configured or path does not exist.'];
+            } else {
+                $writable = is_file($aiUsagePath) ? is_writable($aiUsagePath) : is_writable(dirname($aiUsagePath));
+                $checks[] = ['name' => 'ai_usage_log', 'state' => $writable ? 'ok' : 'warn', 'detail' => 'writable=' . ($writable ? 'true' : 'false')];
+            }
+
+            foreach ($this->modelRouter->status() as $tier => $tierStatus) {
+                $checks[] = [
+                    'name' => 'model_tier_' . $tier,
+                    'state' => $tierStatus === 'unconfigured' ? 'warn' : 'ok',
+                    'detail' => $tierStatus,
+                ];
+            }
+
+            $tiersConfig = [];
+            foreach ((array) ($this->config['model']['tiers'] ?? []) as $tierKey => $tierConfig) {
+                $tiersConfig[$tierKey] = [
+                    'enabled' => (bool) ($tierConfig['enabled'] ?? false),
+                    'provider' => (string) ($tierConfig['provider'] ?? ''),
+                    'name' => (string) ($tierConfig['name'] ?? ''),
+                ];
+            }
+
+            return Response::json([
+                'component' => 'mind.elonn',
+                'component_version' => '2',
+                'deployment_id' => '',
+                'status' => $healthy ? 'running' : 'degraded',
+                'health' => [
+                    'state' => $healthy ? 'healthy' : 'degraded',
+                    'checks' => $checks,
+                ],
+                'configuration' => [
+                    'inspectable' => [
+                        'model.timeout_seconds' => (int) ($this->config['model']['timeout_seconds'] ?? 0),
+                        'model.output_tokens' => (int) ($this->config['model']['output_tokens'] ?? 0),
+                        'model.tiers' => $tiersConfig,
+                    ],
+                    'mutable' => [],
+                ],
+                'maintenance' => ['state' => 'normal', 'reason' => ''],
+                'diagnostics' => ['available' => []],
+                'control' => [
+                    'restart' => ['state' => 'unavailable', 'reason' => 'Mind does not implement an administrative restart operation.'],
+                    'drain' => ['state' => 'unavailable', 'reason' => 'Mind does not implement an administrative drain operation.'],
+                ],
+                'observed_at' => gmdate('Y-m-d\TH:i:s\Z'),
+                'metadata' => (object) [],
+            ]);
+        });
+
         $this->router->get('/', fn (): Response => Response::json([
             'service' => 'elonn_mind',
             'description' => 'Elonn Mind reasoning Service.',
