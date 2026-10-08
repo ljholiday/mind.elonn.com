@@ -4,3 +4,4 @@ public/favicon.ico
 public/robots.txt
 storage/ai-usage/*
 !storage/ai-usage/.gitkeep
+storage/maintenance.json

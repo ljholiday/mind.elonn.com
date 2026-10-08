@@ -181,7 +181,7 @@ final class Application
                     ],
                     'mutable' => [],
                 ],
-                'maintenance' => ['state' => 'normal', 'reason' => ''],
+                'maintenance' => $this->maintenanceState(),
                 'diagnostics' => ['available' => []],
                 'control' => [
                     'restart' => ['state' => 'unavailable', 'reason' => 'Mind does not implement an administrative restart operation.'],
@@ -190,6 +190,58 @@ final class Application
                 'observed_at' => gmdate('Y-m-d\TH:i:s\Z'),
                 'metadata' => (object) [],
             ]);
+        });
+
+        $this->router->post('/administrative-interface/maintenance', function (Request $request): Response {
+            // Mind's first real Admin Plane control capability (ELONN.md, Admin <-> Models:
+            // "Models performs administrative operations affecting ... usage limits" --
+            // maintenance state is the same kind of administrative operation). Administrative
+            // operations are attributable: the acting operator's email is threaded through
+            // from admin.elonn.local's own authenticated session, the same pattern Conductor's
+            // registry approve/reject already uses for operator_member_id.
+            $caller = $this->authenticatedService($request);
+            if ($caller === null || $caller->name !== 'admin.elonn') {
+                return Response::json([
+                    'errors' => [[
+                        'code' => 'mind.service_auth_failed',
+                        'class' => 'auth',
+                        'message' => 'Authenticated admin service request is required.',
+                    ]],
+                ], 401);
+            }
+
+            $body = is_array($request->parsedBody()) ? $request->parsedBody() : [];
+            $state = trim((string) ($body['state'] ?? ''));
+            if (!in_array($state, ['normal', 'maintenance'], true)) {
+                return Response::json([
+                    'errors' => [[
+                        'code' => 'mind.invalid_maintenance_state',
+                        'class' => 'contract',
+                        'message' => 'state must be "normal" or "maintenance".',
+                    ]],
+                ], 400);
+            }
+
+            $reason = trim((string) ($body['reason'] ?? ''));
+            $operatorEmail = trim((string) ($body['operator_email'] ?? ''));
+
+            $written = $this->writeMaintenanceState([
+                'state' => $state,
+                'reason' => $state === 'maintenance' ? $reason : '',
+                'changed_by' => $operatorEmail,
+                'changed_at' => gmdate('Y-m-d\TH:i:s\Z'),
+            ]);
+            if (!$written) {
+                return Response::json([
+                    'errors' => [[
+                        'code' => 'mind.maintenance_write_failed',
+                        'class' => 'internal',
+                        'message' => 'The maintenance state could not be persisted.',
+                    ]],
+                ], 500);
+            }
+
+            return Response::json(['maintenance' => $this->maintenanceState()]);
         });
 
         $this->router->get('/', fn (): Response => Response::json([
@@ -215,6 +267,17 @@ final class Application
             $caller = $this->authenticatedService($request);
             if ($caller === null) {
                 return $this->datasetError('mind.service_auth_failed', 'auth', 'Mind service authentication failed.', 401);
+            }
+
+            $maintenance = $this->maintenanceState();
+            if ($maintenance['state'] === 'maintenance') {
+                return $this->datasetError(
+                    'mind.maintenance',
+                    'dependency',
+                    $maintenance['reason'] !== '' ? $maintenance['reason'] : 'Mind is in administrative maintenance.',
+                    503,
+                    $caller
+                );
             }
 
             $content = is_array($request->parsedBody()['content'] ?? null) ? $request->parsedBody()['content'] : [];
@@ -245,6 +308,49 @@ final class Application
 
             return Response::json($this->reasoningDataset($material, $result, $caller), 201);
         });
+    }
+
+    /**
+     * @return array{state:string, reason:string, changed_by?:string, changed_at?:string}
+     */
+    private function maintenanceState(): array
+    {
+        $path = (string) ($this->config['maintenance']['path'] ?? '');
+        if ($path === '' || !is_file($path)) {
+            return ['state' => 'normal', 'reason' => ''];
+        }
+
+        $decoded = json_decode((string) file_get_contents($path), true);
+        if (!is_array($decoded) || !in_array($decoded['state'] ?? null, ['normal', 'maintenance'], true)) {
+            return ['state' => 'normal', 'reason' => ''];
+        }
+
+        return [
+            'state' => (string) $decoded['state'],
+            'reason' => (string) ($decoded['reason'] ?? ''),
+            'changed_by' => (string) ($decoded['changed_by'] ?? ''),
+            'changed_at' => (string) ($decoded['changed_at'] ?? ''),
+        ];
+    }
+
+    /**
+     * @param array{state:string, reason:string, changed_by:string, changed_at:string} $state
+     */
+    private function writeMaintenanceState(array $state): bool
+    {
+        $path = (string) ($this->config['maintenance']['path'] ?? '');
+        if ($path === '') {
+            return false;
+        }
+
+        $directory = dirname($path);
+        if (!is_dir($directory) && !@mkdir($directory, 0775, true)) {
+            return false;
+        }
+
+        $written = @file_put_contents($path, json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX);
+
+        return $written !== false;
     }
 
     private function authenticatedService(Request $request): ?AuthenticatedService

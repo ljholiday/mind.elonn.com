@@ -32,6 +32,13 @@ return [
         'path' => mind_path_config('MIND_AI_USAGE_PATH', dirname(__DIR__) . '/storage/ai-usage/mind-ai-usage.jsonl'),
         'max_records' => mind_int_config('MIND_AI_USAGE_MAX_RECORDS', 5000),
     ],
+    'maintenance' => [
+        // Mind's first real Admin Plane control capability (see ELONN.md, Admin <-> Models):
+        // a single-file administrative flag, consistent with Mind's existing file-based
+        // persistence (ai_usage above) rather than adding a database Mind does not otherwise
+        // have. Toggled only through POST /administrative-interface/maintenance.
+        'path' => mind_path_config('MIND_MAINTENANCE_PATH', dirname(__DIR__) . '/storage/maintenance.json'),
+    ],
     'service_auth' => [
         'admin.elonn' => mind_string_config('ELONN_ADMIN_MIND_TOKEN'),
         'conductor_keys_url' => rtrim(
