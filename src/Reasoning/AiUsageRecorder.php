@@ -9,10 +9,15 @@ namespace App\Reasoning;
  * Operations Center can mirror it through GET /metrics/ai-usage. Token counts are
  * captured from the provider response; cost_usd is computed from the per-tier
  * rates the caller passes in (USD per 1,000,000 tokens), cached input priced
- * separately, and left null when no rate is supplied.
+ * separately, and left null when no rate is supplied. The current request's
+ * events are also kept in memory so TraceRecorder can backfill the same totals
+ * onto the reasoning trace it records for the same /mind/call request.
  */
 final class AiUsageRecorder
 {
+    /** @var list<array<string, mixed>> Events recorded during the current request. */
+    private array $events = [];
+
     /**
      * @param int $maxRecords Newest N events kept on disk; 0 disables pruning.
      */
@@ -47,7 +52,7 @@ final class AiUsageRecorder
             ?? 0
         );
 
-        $this->append([
+        $record = [
             'id' => $this->nextId(),
             'provider' => $provider,
             'model' => $model,
@@ -68,7 +73,59 @@ final class AiUsageRecorder
             'status' => $status,
             'error_message' => $errorMessage,
             'created_at' => gmdate('Y-m-d H:i:s'),
-        ]);
+        ];
+
+        $this->events[] = $record;
+        $this->append($record);
+    }
+
+    /**
+     * Aggregate of every event recorded this request, for TraceRecorder backfill.
+     *
+     * @return array{input_tokens:int, cached_input_tokens:int, output_tokens:int, total_tokens:int,
+     *     cost_usd:float|null, provider_calls:int, latency_ms:int, providers:list<string>, models:list<string>}
+     */
+    public function requestTotals(): array
+    {
+        $inputTokens = 0;
+        $cachedInputTokens = 0;
+        $outputTokens = 0;
+        $totalTokens = 0;
+        $latencyMs = 0;
+        $cost = 0.0;
+        $hasCost = false;
+        $providers = [];
+        $models = [];
+
+        foreach ($this->events as $event) {
+            $inputTokens += (int) $event['input_tokens'];
+            $cachedInputTokens += (int) ($event['cached_input_tokens'] ?? 0);
+            $outputTokens += (int) $event['output_tokens'];
+            $totalTokens += (int) $event['total_tokens'];
+            $latencyMs += (int) $event['latency_ms'];
+            if ($event['cost_usd'] !== null) {
+                $cost += (float) $event['cost_usd'];
+                $hasCost = true;
+            }
+            if ((string) $event['provider'] !== '') {
+                $providers[(string) $event['provider']] = true;
+            }
+            if ((string) $event['model'] !== '') {
+                $models[(string) $event['model']] = true;
+            }
+        }
+
+        return [
+            'input_tokens' => $inputTokens,
+            'cached_input_tokens' => $cachedInputTokens,
+            'output_tokens' => $outputTokens,
+            'total_tokens' => $totalTokens,
+            'cost_usd' => $hasCost ? round($cost, 6) : null,
+            'provider_calls' => count($this->events),
+            'latency_ms' => $latencyMs,
+            'providers' => array_keys($providers),
+            'models' => array_keys($models),
+        ];
     }
 
     /**

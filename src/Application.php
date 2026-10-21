@@ -14,6 +14,7 @@ use App\Reasoning\ReasoningException;
 use App\Security\AuthenticatedService;
 use App\Security\ServiceAuthenticator;
 use App\Security\SignedRequestVerifier;
+use App\Trace\TraceRecorder;
 use Throwable;
 
 /**
@@ -27,6 +28,7 @@ final class Application
     private Router $router;
     private readonly AiUsageRecorder $aiUsageRecorder;
     private readonly ModelRouter $modelRouter;
+    private readonly TraceRecorder $traceRecorder;
 
     /** @param array<string, mixed> $config */
     public function __construct(private readonly array $config)
@@ -37,6 +39,8 @@ final class Application
             (int) ($aiUsage['max_records'] ?? 5000)
         );
         $this->modelRouter = new ModelRouter((array) ($config['model'] ?? []), $this->aiUsageRecorder);
+        $tracing = (array) ($config['tracing'] ?? []);
+        $this->traceRecorder = new TraceRecorder((string) ($tracing['path'] ?? ''));
         $this->router = new Router();
         $this->routes();
     }
@@ -121,6 +125,54 @@ final class Application
                 'events' => $this->aiUsageRecorder->summaries($sinceId, $limit),
                 'next_since_id' => $this->aiUsageRecorder->nextSinceId(),
             ]);
+        });
+
+        $this->router->get('/metrics/reasoning-traces', function (Request $request): Response {
+            $caller = $this->authenticatedService($request);
+            if ($caller === null || $caller->name !== 'admin.elonn') {
+                return Response::json([
+                    'errors' => [[
+                        'code' => 'mind.service_auth_failed',
+                        'class' => 'auth',
+                        'message' => 'Authenticated admin service request is required.',
+                    ]],
+                ], 401);
+            }
+
+            $sinceId = max(0, (int) ($_GET['since_id'] ?? 0));
+            $limit = max(1, min(500, (int) ($_GET['limit'] ?? 100)));
+
+            return Response::json([
+                'traces' => $this->traceRecorder->summaries($sinceId, $limit),
+                'next_since_id' => $this->traceRecorder->nextSinceId(),
+            ]);
+        });
+
+        $this->router->get('/metrics/reasoning-trace', function (Request $request): Response {
+            $caller = $this->authenticatedService($request);
+            if ($caller === null || $caller->name !== 'admin.elonn') {
+                return Response::json([
+                    'errors' => [[
+                        'code' => 'mind.service_auth_failed',
+                        'class' => 'auth',
+                        'message' => 'Authenticated admin service request is required.',
+                    ]],
+                ], 401);
+            }
+
+            $traceId = trim((string) ($_GET['trace_id'] ?? ''));
+            $detail = $traceId === '' ? null : $this->traceRecorder->detail($traceId);
+            if ($detail === null) {
+                return Response::json([
+                    'errors' => [[
+                        'code' => 'mind.trace_not_found',
+                        'class' => 'not_found',
+                        'message' => 'Trace was not found.',
+                    ]],
+                ], 404);
+            }
+
+            return Response::json($detail);
         });
 
         $this->router->get('/administrative-interface', function (Request $request): Response {
@@ -269,30 +321,32 @@ final class Application
                 return $this->datasetError('mind.service_auth_failed', 'auth', 'Mind service authentication failed.', 401);
             }
 
+            $call = $request->parsedBody();
+            $startedAt = microtime(true);
+
             $maintenance = $this->maintenanceState();
             if ($maintenance['state'] === 'maintenance') {
-                return $this->datasetError(
+                return $this->respondWithTrace($call, $startedAt, $this->datasetErrorPayload(
                     'mind.maintenance',
                     'dependency',
                     $maintenance['reason'] !== '' ? $maintenance['reason'] : 'Mind is in administrative maintenance.',
-                    503,
                     $caller
-                );
+                ), 503);
             }
 
-            $content = is_array($request->parsedBody()['content'] ?? null) ? $request->parsedBody()['content'] : [];
+            $content = is_array($call['content'] ?? null) ? $call['content'] : [];
             $operation = (string) ($content['operation'] ?? '');
             if ($operation === '') {
-                return $this->datasetError('mind.operation_required', 'invalid_call', 'Mind Call content.operation is required.', 400, $caller);
+                return $this->respondWithTrace($call, $startedAt, $this->datasetErrorPayload('mind.operation_required', 'invalid_call', 'Mind Call content.operation is required.', $caller), 400);
             }
 
             if ($operation !== 'mind.reason') {
-                return $this->datasetError('mind.unsupported_operation', 'invalid_call', 'Mind operation is not supported.', 422, $caller);
+                return $this->respondWithTrace($call, $startedAt, $this->datasetErrorPayload('mind.unsupported_operation', 'invalid_call', 'Mind operation is not supported.', $caller), 422);
             }
 
             $material = trim((string) ($content['material'] ?? ''));
             if ($material === '') {
-                return $this->datasetError('mind.material_required', 'invalid_call', 'Mind reasoning requires material.', 422, $caller);
+                return $this->respondWithTrace($call, $startedAt, $this->datasetErrorPayload('mind.material_required', 'invalid_call', 'Mind reasoning requires material.', $caller), 422);
             }
 
             $tier = ModelTier::fromRequest($content['tier'] ?? null);
@@ -300,14 +354,32 @@ final class Application
             try {
                 $result = $this->modelRouter->clientFor($tier, $caller->name)->reason($material);
             } catch (ReasoningException $exception) {
-                return $this->datasetError($exception->errorCode, $exception->errorClass, $exception->getMessage(), $exception->httpStatus, $caller);
+                return $this->respondWithTrace($call, $startedAt, $this->datasetErrorPayload($exception->errorCode, $exception->errorClass, $exception->getMessage(), $caller), $exception->httpStatus);
             } catch (Throwable $throwable) {
                 error_log('[mind] mind.reason failed: ' . $throwable->getMessage());
-                return $this->datasetError('mind.reasoning_failed', 'dependency', 'Mind was unable to complete reasoning.', 503, $caller);
+                return $this->respondWithTrace($call, $startedAt, $this->datasetErrorPayload('mind.reasoning_failed', 'dependency', 'Mind was unable to complete reasoning.', $caller), 503);
             }
 
-            return Response::json($this->reasoningDataset($material, $result, $caller), 201);
+            return $this->respondWithTrace($call, $startedAt, $this->reasoningDataset($material, $result, $caller), 201);
         });
+    }
+
+    /**
+     * Records this request's reasoning trace -- the Call Conductor sent, the Dataset Mind is
+     * about to return (success or error shape alike, mirroring conductor.elonn.local's own
+     * TraceRecorder::record() call in Application::call()), and this request's AI usage totals --
+     * then returns the Dataset as the actual HTTP response. Every post-authentication outcome of
+     * POST /mind/call goes through this, so admin.elonn's Mind trace viewer sees every real
+     * attempt, not just successful ones.
+     *
+     * @param array<string, mixed> $call
+     * @param array<string, mixed> $dataset
+     */
+    private function respondWithTrace(array $call, float $startedAt, array $dataset, int $status): Response
+    {
+        $this->traceRecorder->record($call, $dataset, $startedAt, $this->aiUsageRecorder->requestTotals());
+
+        return Response::json($dataset, $status);
     }
 
     /**
@@ -399,7 +471,17 @@ final class Application
         ];
     }
 
+    /**
+     * Pre-authentication failure only: there is no authenticated caller and no real Call worth
+     * tracing yet, so this returns directly rather than going through respondWithTrace().
+     */
     private function datasetError(string $code, string $class, string $message, int $status, ?AuthenticatedService $caller = null): Response
+    {
+        return Response::json($this->datasetErrorPayload($code, $class, $message, $caller), $status);
+    }
+
+    /** @return array<string, mixed> */
+    private function datasetErrorPayload(string $code, string $class, string $message, ?AuthenticatedService $caller = null): array
     {
         $context = [
             'service' => 'mind',
@@ -409,7 +491,7 @@ final class Application
             $context['owner'] = $caller->owner();
         }
 
-        return Response::json([
+        return [
             'id' => 'dataset:service:mind:' . bin2hex(random_bytes(16)),
             'type' => 'service',
             'scope' => 'object',
@@ -427,6 +509,6 @@ final class Application
                 'message' => $message,
             ]],
             'context' => $context,
-        ], $status);
+        ];
     }
 }

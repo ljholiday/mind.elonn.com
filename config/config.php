@@ -32,6 +32,9 @@ return [
         'path' => mind_path_config('MIND_AI_USAGE_PATH', dirname(__DIR__) . '/storage/ai-usage/mind-ai-usage.jsonl'),
         'max_records' => mind_int_config('MIND_AI_USAGE_MAX_RECORDS', 5000),
     ],
+    'tracing' => [
+        'path' => mind_path_config('MIND_TRACE_PATH', dirname(__DIR__) . '/storage/traces/mind-traces.jsonl'),
+    ],
     'maintenance' => [
         // Mind's first real Admin Plane control capability (see ELONN.md, Admin <-> Models):
         // a single-file administrative flag, consistent with Mind's existing file-based
