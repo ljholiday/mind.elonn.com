@@ -447,6 +447,13 @@ final class Application
                 'material' => $material,
                 'response' => $result->response,
                 'model' => $result->model,
+                // Canonical content.body (dev.elonn canonical/object.md, Content body): the
+                // whole response as one paragraph node. Mind does no Markdown/structure
+                // parsing of the model's raw text yet -- that is deliberately out of scope for
+                // this first canonical pilot (world dataset refactor step 4).
+                'body' => [
+                    ['node' => 'paragraph', 'text' => $result->response],
+                ],
             ],
             'resources' => [],
             'permissions' => ['can_view' => true, 'can_act' => false, 'can_share' => false],
