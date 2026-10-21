@@ -465,7 +465,8 @@ final class Application
             'relationships' => [],
             'collections' => [],
             'resources' => [],
-            'placements' => [['id' => 'placement:' . $objectId . ':carry', 'type' => 'carry', 'content' => ['object' => $objectId]]],
+            // No `id` here: World mints a Placement's id itself (placement.md, Placement identity).
+            'placements' => [['type' => 'carry', 'content' => ['object' => $objectId]]],
             'errors' => [],
             'context' => ['service' => 'mind', 'operation' => 'mind.reason', 'caller' => $caller->name],
         ];
